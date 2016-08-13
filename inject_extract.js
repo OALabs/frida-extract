@@ -74,13 +74,13 @@ function log(msg)
 };
 
 
-//syncronous dump memory as {"address":<virtual_address>,"memory": [byte_1,byte_2 ... byte_n]}
-function dump(json_msg)
+//syncronous dump memory as {"address":<virtual_address>}, data: binary_string
+function dump(virtual_address, data)
 {
     send({
         name: '+dump',
-        payload: json_msg
-    });
+        address: virtual_address
+    }, data);
     recv('+dump-ack', function () {}).wait();        
 };
 
@@ -334,6 +334,7 @@ Interceptor.replace(ptrNtWriteVirtualMemory, new NativeCallback(function (Proces
     log("NtWriteVirtualMemory pid: " + String(GetProcessId(ProcessHandle)));
 
     //dump if written to remote proc
+    //TODO: handle writes to multiple processes (anti-unpacker)
     var mem_pid = GetProcessId(ProcessHandle);
     var arr_len = pids.length;
     for (var i = 0; i < arr_len; i++) {
@@ -341,9 +342,7 @@ Interceptor.replace(ptrNtWriteVirtualMemory, new NativeCallback(function (Proces
             var memstart = Buff.toInt32();
             var size = NumberOfBytesToWrite;
             var rawArr = Memory.readByteArray(ptr(memstart),size);
-            var p = new Uint8Array(rawArr);
-            var bytArray = [].slice.call(p);
-            dump(JSON.stringify({"address":BaseAddress.toInt32(),"memory":bytArray}));
+            dump(BaseAddress.toInt32(),rawArr);
         }
     }
 

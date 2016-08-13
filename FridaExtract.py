@@ -47,6 +47,8 @@ class FridaExtract:
     def __init__(self, cmd, out_file="dump.bin"):
         self.pid = frida.spawn(cmd)
         self.session = frida.attach(self.pid)
+        #enable Ducktape runtime
+        self.session.disable_jit()
         self.dump = {}
         self.out_file = out_file
         self.raw = False
@@ -106,9 +108,11 @@ class FridaExtract:
                     pass
 
             elif stanza['name'] == '+dump':
-                #{"address":<virtual_address>,"memory": [byte_1,byte_2 ... byte_n]}
-                j_dump = json.loads(stanza['payload'])
-                self.dump[j_dump["address"]] = j_dump["memory"]
+                #{"address":<virtual_address>}, data: <bin_string>
+                if self.raw:
+                    print " ".join([elem.encode("hex")  for elem in data]) + "\n"
+                #serialize data and store 
+                self.dump[stanza["address"]] = [ord(elem) for elem in data]
                 try:
                     self.extract.post_message({ 'type': '+dump-ack' })
                 except Exception as e:
@@ -116,9 +120,6 @@ class FridaExtract:
 
             elif stanza['name'] == '+flush':
                 print "Flush Message Buffers"
-                # for msg in stanza['payload']:
-                #     print msg
-                #     print "\n"
                 try:
                     self.extract.post_message({ 'type': '+flush-ack' })
                 except Exception as e:
