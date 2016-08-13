@@ -67,7 +67,7 @@ python FridaExtract.py bad.exe --verbose
 
 Frida uses userland hooks that can easily be bypassed. If you need a more robust DBI tool try PIN! A great example of using PIN to extract RunPE is provided by [here](http://jbremer.org/malware-unpacking-level-pintool/).
 
-Frida injects a javascript runtime into the process you are analyzing, it is *not* stealthy. For a decent overview of how Frida may be detected by malware [check this out](https://crackinglandia.wordpress.com/2015/11/10/anti-instrumentation-techniques-i-know-youre-there-frida/).
+Frida injects a javascript runtime into the process you are analyzing, it is **not** stealthy. For a decent overview of how Frida may be detected by malware [check this out](https://crackinglandia.wordpress.com/2015/11/10/anti-instrumentation-techniques-i-know-youre-there-frida/).
 
 
 ## Acknowledgments
