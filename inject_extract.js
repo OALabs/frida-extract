@@ -317,17 +317,18 @@ Interceptor.replace(ptrNtWriteVirtualMemory, new NativeCallback(function (Proces
     var strRetNTAPI = hexify(RetNTAPI);
 
     var strProcessHandle = hexify(ProcessHandle);
-    var strBaseAddress = hexify(BaseAddress);
+    var strBaseAddress = hexify(BaseAddress.toInt32());
 
-    var strBuffer= hexify(Buff);
+    var strBuffer= hexify(Buff.toInt32());
 
     var strNumberOfBytesToWrite = hexify(NumberOfBytesToWrite);
-    //Optional args ptr
-    if(NumberOfBytesWritten == 0){
-        var strNumberOfBytesWritten = hexify(NumberOfBytesWritten);
+
+    var strNumberOfBytesWritten = "NULL";
+    try{
+        strNumberOfBytesWritten = hexify(Memory.readULong(NumberOfBytesWritten));
     }
-    else{
-        var strNumberOfBytesWritten = hexify(Memory.readULong(NumberOfBytesWritten));
+    catch (e){
+        log("NtWriteVirtualMemory: error reading ptr NumberOfBytesWritten");
     }
 
     log("NtWriteVirtualMemory("+strProcessHandle+", "+strBaseAddress+", "+strBuffer+", "+strNumberOfBytesToWrite+", "+strNumberOfBytesWritten+") -> " + strRetNTAPI);
@@ -368,18 +369,21 @@ Interceptor.replace(ptrNtCreateThread, new NativeCallback(function (ThreadHandle
     
     var strThreadHandle =  hexify(Memory.readU32(ThreadHandle));
     var strDesiredAccess =  hexify(DesiredAccess);
-    //Optional arg ptr
-    if(ObjectAttributes == 0){
-        var strObjectAttributes =  hexify(ObjectAttributes);
+
+    var strObjectAttributes = "NULL";
+    try{
+        strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
     }
-    else{
-        var strObjectAttributes =  hexify(Memory.readU32(ObjectAttributes));
+    catch (e){
+        log("NtCreateThread: error reading ptr ObjectAttributes");
     }
+
+
     var strProcessHandle = hexify(ProcessHandle);
     var strClientId =  hexify(Memory.readU32(ClientId));
     var strThreadContext =  hexify(Memory.readU32(ThreadContext));
     var strInitialTeb =  hexify(Memory.readU32(InitialTeb));
-    var strCreateSuspended = hexify(CreateSuspended);
+    var strCreateSuspended = Boolean(CreateSuspended).toString();
 
     log("NtCreateThread("+strThreadHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strProcessHandle+", "+strClientId+", "+strThreadContext+", "+strInitialTeb+", "+strCreateSuspended+") -> " + strRetNTAPI);
 
@@ -400,12 +404,13 @@ Interceptor.replace(ptrNtResumeThread, new NativeCallback(function (ThreadHandle
     var strRetNTAPI = hexify(RetNTAPI);
 
     var strThreadHandle = hexify(ThreadHandle);
-    //Optional arg ptr
-    if(SuspendCount == 0){
-        var strSuspendCount = hexify(SuspendCount);
+
+    var strSuspendCount = "NULL";
+    try{
+        strSuspendCount = hexify(Memory.readULong(SuspendCount));
     }
-    else{
-        var strSuspendCount =  hexify(Memory.readULong(SuspendCount));
+    catch (e){
+        log("NtResumeThread: error reading ptr SuspendCount");
     }
 
     log("NtResumeThread("+strThreadHandle+", "+strSuspendCount+") -> " + strRetNTAPI);
@@ -473,57 +478,67 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
     var strRetNTAPI = hexify(RetNTAPI);
 
     var strToken = hexify(Token);
-    //Optional arg ptr
-    if(ApplicationName == 0){
-        var strApplicationName = "null";
+
+
+    var strApplicationName = "NULL";
+    try{
+        strApplicationName = Memory.readUtf16String(ApplicationName);
     }
-    else{
-        var strApplicationName = Memory.readUtf16String(ApplicationName);
-    }
-    
-    //Optional arg ptr
-    if(CommandLine == 0){
-        var strCommandLine = "null";
-    }
-    else{
-        var strCommandLine =  Memory.readUtf16String(CommandLine);
-    }
-    
-    //Optional arg ptr
-    if(ProcessAttributes == 0){
-        var strProcessAttributes = hexify(ProcessAttributes);
-    }
-    else{
-        var strProcessAttributes =  hexify(Memory.readU32(ProcessAttributes));
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr ApplicationName");
     }
 
-    //Optional arg ptr
-    if(ThreadAttributes == 0){
-        var strThreadAttributes = hexify(ThreadAttributes);
+    
+    var strCommandLine = "NULL";
+    try{
+        strCommandLine =  Memory.readUtf16String(CommandLine);
     }
-    else{
-        var strThreadAttributes =  hexify(Memory.readU32(ThreadAttributes));
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr CommandLine");
     }
-    var strInheritHandles = hexify(InheritHandles);
+        
+
+    var strProcessAttributes = "NULL";
+    try{
+        strProcessAttributes =  hexify(Memory.readU32(ProcessAttributes));
+    }
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr ProcessAttributes");
+    }
+   
+
+    var strThreadAttributes = "NULL";
+    try{
+        strThreadAttributes =  hexify(Memory.readU32(ThreadAttributes));
+    }
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr ThreadAttributes");
+    }
+
+
+    var strInheritHandles = Boolean(InheritHandles).toString();
     var strCreationFlags = getCreateFlagStr(CreationFlags);
 
-    //Optional arg ptr
-    if(Environment == 0){
-        var strEnvironment = hexify(Environment);
+
+    var strEnvironment = "NULL";
+    try{
+        strEnvironment =  hexify(Memory.readU32(Environment));
     }
-    else{
-        var strEnvironment =  hexify(Memory.readU32(Environment));
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr Environment");
     }
 
-    //Optional arg ptr
-    if(CurrentDirectory == 0){
-        var strCurrentDirectory = hexify(CurrentDirectory);
+
+    var strCurrentDirectory = "NULL";
+    try{
+        strCurrentDirectory =  hexify(Memory.readU32(CurrentDirectory));
     }
-    else{
-        var strCurrentDirectory =  hexify(Memory.readU32(CurrentDirectory));
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr CurrentDirectory");
     }
 
-    var strStartupInfo =  hexify(Memory.readU32(ptr(StartupInfo)));
+
+    var strStartupInfo =  hexify(Memory.readU32(StartupInfo));
     var strProcessInformation =  hexify(Memory.readU32(ProcessInformation));
 
     //parse PROCESS_INFORMTION struct
@@ -538,19 +553,21 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
     var strThreadHandle =  hexify(Memory.readU32(ptr(ProcessInformation.toInt32()+4)));
     
 
-    //Optional arg ptr
-    if(NewToken == 0){
-        var strNewToken = hexify(NewToken);
+    var strNewToken = "NULL";
+    try{
+        strNewToken =  hexify(Memory.readU32(NewToken));
     }
-    else{
-        var strNewToken =  hexify(Memory.readU32(NewToken));
+    catch (e){
+        log("CreateProcessInternalW: error reading ptr NewToken");
     }
+
 
     log("CreateProcessInternalW("+strToken+", "+strApplicationName+", "+strCommandLine+", "+strProcessAttributes+", "+strThreadAttributes+", "+strInheritHandles+", "+strCreationFlags+", "+strEnvironment+", "+strCurrentDirectory+", "+strStartupInfo+", "+strProcessInformation+", "+strNewToken+") -> " + strRetNTAPI);
     log("CreateProcessInternalW pid: " + String(GetProcessId(Memory.readU32(ProcessInformation))));
 
     //save new process PID
     pids.push(GetProcessId(Memory.readU32(ProcessInformation)));
+    
     //ensure each PID is unique
     pids = Array.from(new Set(pids));
     return RetNTAPI;
