@@ -59,8 +59,8 @@ class FridaExtract:
             Attempt to reconstruct PE from dumped memory
         """
         reconstructor = rebuild.ParsePE(self.dump)
-        reconstructor.hunt_base_address()
-        pe_file = reconstructor.build_pe()
+        #use autobuild to automatically construct PE
+        pe_file = reconstructor.auto_build()
         file(self.out_file, 'wb').write(pe_file)
 
 

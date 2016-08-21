@@ -137,7 +137,7 @@ class ParsePE:
 
     def arr_to_bin(self, arr):
         """
-            Convert array of int to binary string
+            Convert array of int to binary string (sort of deserialize)
         """
         out=''
         for i in arr:
@@ -181,7 +181,7 @@ class ParsePE:
                     image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(header_data, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + x * sizeof(IMAGE_SECTION_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
 
                     # find the memory for this section (skip .bss)
-                    if image_section_header.Name.lower() != '.bss':
+                    if (image_section_header.Name.lower() != '.bss') and (image_section_header.Name.lower() != 'bss'):
                         virtual_address = temp_base_address + image_section_header.VirtualAddress
                         if virtual_address not in self.sections.keys():
                             bool_layout_match = False
@@ -193,10 +193,91 @@ class ParsePE:
                 continue  
         return False
 
+    def auto_build(self):
+        """
+            Attempt to automatically build a PE from memory segments.
+            **WARNING: We assume the PE header is injected completely into one memory segment.
+        """
+        candidates = []
+
+        #find all candidates starting with PE magic bytes
+        for address in self.sections.keys():
+            if "MZ" == self.arr_to_bin(self.sections[address][:2]):
+                candidates.append(address)
+
+        #attempt to build PE from each candidate
+        for temp_base_address in candidates:
+            out_file = ''
+            try:
+                header_data = self.arr_to_bin(self.sections[temp_base_address])
+                # read the image dos header
+                image_dos_header = IMAGE_DOS_HEADER.from_buffer_copy(header_data)
+                # read the image nt headers
+                image_nt_headers = IMAGE_NT_HEADERS.from_buffer_copy(header_data, image_dos_header.e_lfanew)
+
+                image_size = image_nt_headers.OptionalHeader.SizeOfImage
+
+                ##################################################################
+                # Build sections into contiguous binary block with base = 0x0.
+                # This takes care of situations where the PE may be injected over
+                # memory segment boundaries or all in one segment.
+                # **may be memory-intensive**
+                ##################################################################
+
+                big_block = self.arr_to_bin(self.sections[temp_base_address])
+
+                for ptr_address in sorted(self.sections):
+                    #ignore segments below base
+                    if ptr_address <= temp_base_address:
+                        continue
+                    #if segments are within range of PE images size append 
+                    if ptr_address <= (temp_base_address + image_size):
+                        #add padding if big_block hasn't reached ptr yet
+                        padding = ptr_address - (len(big_block) + temp_base_address)
+                        if padding < 0:
+                            #something is wrong!
+                            continue 
+                        big_block += ('\x00' * padding) + self.arr_to_bin(self.sections[ptr_address])
+
+                ##################################################################
+                # Pick sections from memory block and convert from virtual 
+                # addresses to PE physical addresses.
+                ##################################################################
+
+                #redundent but helps clairify we are now working on one contiguous block of memory
+                image_dos_header = IMAGE_DOS_HEADER.from_buffer_copy(big_block)
+                image_nt_headers = IMAGE_NT_HEADERS.from_buffer_copy(big_block, image_dos_header.e_lfanew)
+
+                #setup header based on offset of first section
+                first_image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(big_block, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
+                first_section_offset = first_image_section_header.PointerToRawData
+                header_data = big_block[:first_section_offset]
+
+                #add header to out buffer
+                buf = header_data
+
+                # enumerate each section
+                for x in xrange(image_nt_headers.FileHeader.NumberOfSections):
+                    # read the image section header
+                    image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(header_data, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + x * sizeof(IMAGE_SECTION_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
+
+                    # ignore .bss sections
+                    if (image_section_header.Name.lower() == '.bss') or (image_section_header.Name.lower() == 'bss'):
+                        continue
+
+                    # since base = 0x0 VirtualAddress is the offset in the memory segment
+                    section_data = big_block[image_section_header.VirtualAddress:image_section_header.VirtualAddress+image_section_header.SizeOfRawData]
+                    buf += section_data
+                    
+                return buf
+            except Exception as e:
+                continue
+        return ''
 
     def build_pe(self):
         """
             Construct PE from memory sections
+            This expects each memory section to contain one image section.
         """
 
         # find the section at the base address
@@ -222,7 +303,7 @@ class ParsePE:
             image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(header_data, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + x * sizeof(IMAGE_SECTION_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
 
             # find the memory for this section (skip .bss)
-            if image_section_header.Name.lower() == '.bss':
+            if (image_section_header.Name.lower() == '.bss') or (image_section_header.Name.lower() == 'bss'):
                 continue
 
             virtual_address = self.base_address + image_section_header.VirtualAddress

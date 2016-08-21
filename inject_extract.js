@@ -409,10 +409,11 @@ Interceptor.replace(ptrNtResumeThread, new NativeCallback(function (ThreadHandle
     }
 
     log("NtResumeThread("+strThreadHandle+", "+strSuspendCount+") -> " + strRetNTAPI);
-    log("NtResumeThread pid: " + String(GetProcessIdOfThread(ThreadHandle)));
 
     //kill everything if remote thread resumed
     var thread_pid = GetProcessIdOfThread(ThreadHandle);
+    log("NtResumeThread pid: " + String(thread_pid));
+
     var arr_len = pids.length;
     for (var i = 0; i < arr_len; i++) {
         if(thread_pid == pids[i]){
@@ -432,15 +433,17 @@ var ptrNtDelayExecution = Module.findExportByName("NTDLL.DLL", "NtDelayExecution
 var NtDelayExecution = new NativeFunction(ptrNtDelayExecution, 'uint', ['uchar', 'pointer'], 'stdcall');
 Interceptor.replace(ptrNtDelayExecution, new NativeCallback(function (Alertable, DelayInterval) {
 
-    var strRetNTAPI = hexify(RetNTAPI);
-    var strAlertable = hexify(Alertable);
-    var strDelayInterval = hexify(Memory.readU32(DelayInterval));
+    
+    var strAlertable = Boolean(Alertable).toString();
+    var strDelayInterval = hexify(Memory.readLong(DelayInterval));
 
     //set delay to 1 nanosec
     //TODO: hook time ticks and add in lost time
-    log("Squashed delay!");
-    Memory.writeU32(DelayInterval, 1);
+    log("Squashed delay: " + strDelayInterval);
+    Memory.writeLong(DelayInterval, 1);
+
     var RetNTAPI = NtDelayExecution(Alertable, DelayInterval);
+    var strRetNTAPI = hexify(RetNTAPI);
 
     log("NtDelayExecution("+strAlertable+", "+strDelayInterval+") -> " + strRetNTAPI);
     return RetNTAPI;
@@ -559,10 +562,14 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
 //
 // EXCEPTION HANDLER
 //
+// *We don't need this for now and it causes a flood of
+//  msgs when a packer uses SEH for control flow.
+//
 /////////////////////////////////////////////////////////
-Process.setExceptionHandler(function (ex) {
-    log("Exception: " +  String(ex));
-});
+
+// Process.setExceptionHandler(function (ex) {
+//     log("Exception: " +  String(ex));
+// });
 
 
 
