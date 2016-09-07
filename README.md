@@ -1,6 +1,8 @@
 # FridaExtract
 FridaExtract is a [Frida.re](http://www.frida.re/) based [RunPE](http://www.adlice.com/runpe-hide-code-behind-legit-process/) extraction tool. RunPE type injection is a common technique used by malware to hide code within another process. It also happens to be the final stage in a lot of packers : )
 
+NOTE: Frida now also supports extraction of injected PE files using the "MapViewOfSection" technique best [described here](http://blog.w4kfu.com/tag/duqu).
+
 Using FridaExtract you can automatically extract and reconstruct a PE file that has been injected using the RunPE method... and bypass these packers! 
 
 ## Why Frida?
@@ -20,10 +22,19 @@ The code is specifically commented and organized to act as a template for you to
 
 ## Extracting PE Files
 
-FridaExtract is only able to extract RunPE injected PE files so it is fairly limited. If you are using a VM that is easy to snapshot-run-revert then you can just try FridaExtract blindly on every malware sample and see what comes out but we don't recommend it. Instead, FridaExtract is good compliment to a sandbox (we <3 [malwr](https://malwr.com/)). First run the sample in a sandbox and if you see the following API calls then FridaExract may be the tool for you:
+FridaExtract is only able to extract RunPE injected PE files so it is fairly limited. If you are using a VM that is easy to snapshot-run-revert then you can just try FridaExtract blindly on every malware sample and see what comes out but we don't recommend it. Instead, FridaExtract is good compliment to a sandbox (we <3 [malwr](https://malwr.com/)). First run the sample in a sandbox and note the API calls.
+
+For RunPE technique if you see the following API calls then FridaExract may be the tool for you:
 * CreateProcess
-* WriteVirtualMemory
-* ResumeThread
+* WriteVirtualMemory (to remote process)
+* ResumeThread (in remote process)
+
+For the MapViewOfSection technique if you see the following API calls then FridaExract may be the tool for you:
+* CreateProcess
+* NtCreateSection
+* NtUnmapViewOfSection (remote process)
+* NtMapViewOfSection (remote process)
+
 
 ### Examples
 By default FridaExtract will attempt to automatically extract the injected PE file, reconstruct it, and dump it to a file called `dump.bin`. 
@@ -38,7 +49,7 @@ python FridaExtract.py bad.exe --out_file extracted.exe
 ```
 
 #### Pass Arguments
-If the packed PE file you are attempting to extract requires arguments you can pass them using the `--ags` command. Multiple arguments can be passed as comma separated.
+If the packed PE file you are attempting to extract requires arguments you can pass them using the `--args` command. Multiple arguments can be passed as comma separated.
 ```
 python FridaExtract.py bad.exe --args password
 ```
@@ -57,6 +68,9 @@ FridaExtract uses hooks on the following APIs to extract the injected PE file:
 * NtResumeThread
 * NtDelayExecution
 * CreateProcessInternalW
+* NtMapViewOfSection
+* NtUnmapViewOfSection
+* NtCreateSection
 
 To trace these APIs and print the results use the `-v` or `--verbose` command.
 ```

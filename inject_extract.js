@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////
 //
 // Use Frida to automatically extract injected PE files 
-// (injected via RunPE method)
+// (injected via RunPE method and MapViewOfSection method)
 //
 //
 // Author: @herrcore

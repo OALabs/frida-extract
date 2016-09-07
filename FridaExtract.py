@@ -2,7 +2,7 @@
 
 #######################################################################################################################
 ##
-## Use Frida to automatically extract injected PE files (injected via RunPE method)
+## Use Frida to automatically extract injected PE files (injected via RunPE method and MapViewOfSection method)
 ## 
 ##
 ## !!!WARNING: If you use this to extract packed malware run it in a safe VM!!! 

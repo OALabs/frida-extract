@@ -7,7 +7,7 @@
 ##      https://github.com/jbremer/godware/blob/master/rebuild.py
 ##      (Beers are on me if we ever meet again!)
 ##
-## Hacks to make this a module: @herrcore  
+## Hacks to make this a module and auto_build: @herrcore  
 ##
 ############################################################################################
 
