@@ -24,12 +24,12 @@ The code is specifically commented and organized to act as a template for you to
 
 FridaExtract is only able to extract RunPE injected PE files so it is fairly limited. If you are using a VM that is easy to snapshot-run-revert then you can just try FridaExtract blindly on every malware sample and see what comes out but we don't recommend it. Instead, FridaExtract is good compliment to a sandbox (we <3 [malwr](https://malwr.com/)). First run the sample in a sandbox and note the API calls.
 
-For RunPE technique if you see the following API calls then FridaExract may be the tool for you:
+For RunPE technique if you see the following API calls then FridaExtract may be the tool for you:
 * CreateProcess
 * WriteVirtualMemory (to remote process)
 * ResumeThread (in remote process)
 
-For the MapViewOfSection technique if you see the following API calls then FridaExract may be the tool for you:
+For the MapViewOfSection technique if you see the following API calls then FridaExtract may be the tool for you:
 * CreateProcess
 * NtCreateSection
 * NtUnmapViewOfSection (remote process)
