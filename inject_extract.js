@@ -44,6 +44,20 @@ const DETACHED_PROCESS = 0x00000008;
 const EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
 const INHERIT_PARENT_AFFINITY = 0x00010000;
 
+const SEC_FILE = 0x800000;
+const SEC_IMAGE = 0x1000000;
+const SEC_VLM = 0x2000000;
+const SEC_RESERVE = 0x4000000;
+const SEC_COMMIT = 0x8000000;
+const SEC_NOCACHE = 0x10000000;
+
+const STANDARD_RIGHTS_REQUIRED = 0x000F0000;
+const SECTION_QUERY = 0x0001;
+const SECTION_MAP_WRITE = 0x0002;
+const SECTION_MAP_READ = 0x0004;
+const SECTION_MAP_EXECUTE = 0x0008;
+const SECTION_EXTEND_SIZE = 0x0010;
+
 
 /////////////////////////////////////////////////////////
 //
@@ -52,6 +66,9 @@ const INHERIT_PARENT_AFFINITY = 0x00010000;
 /////////////////////////////////////////////////////////
 var pids = [];
 var current_pid = 0;
+//TODO: warning this schema only supports one mapped remote view per section 
+//[<SectionHandle>: {BaseAddress = 0x00, ViewSize = 0x00, RemotePID: 0x00, RemoteBaseAddress:0x00]
+var sections = [];
 var DEBUG_FLAG = false;
 
 
@@ -162,6 +179,7 @@ function bin2String(array) {
 }
 
 
+
 //check memory protection
 function getProtectionStr(flag){
     if(flag & PAGE_EXECUTE){
@@ -260,6 +278,70 @@ function getCreateFlagStr(flag){
 }
 
 
+//check Allocation Attributes
+function getAllocationAttributesStr(flag){
+    var flagArr = [];
+    if(flag & SEC_FILE){
+        flagArr.push("SEC_FILE");
+    }
+    if(flag & SEC_IMAGE){
+        flagArr.push("SEC_IMAGE");
+    }
+    if(flag & SEC_VLM){
+        flagArr.push("SEC_VLM");
+    }
+    if(flag & SEC_RESERVE){
+        flagArr.push("SEC_RESERVE");
+    }
+    if(flag & SEC_COMMIT){
+        flagArr.push("SEC_COMMIT");
+    }
+    if(flag & SEC_NOCACHE){
+        flagArr.push("SEC_NOCACHE");
+    }
+
+
+    if(flagArr.length > 0){
+        return flagArr.join(" | ");
+    }
+    else{
+        return hexify(flag);
+    }
+}
+
+//check Access
+function getAccessStr(flag){
+    var flagArr = [];
+    if(flag & STANDARD_RIGHTS_REQUIRED){
+        flagArr.push("STANDARD_RIGHTS_REQUIRED");
+    }
+    if(flag & SECTION_QUERY){
+        flagArr.push("SECTION_QUERY");
+    }
+    if(flag & SECTION_MAP_WRITE){
+        flagArr.push("SECTION_MAP_WRITE");
+    }
+    if(flag & SECTION_MAP_READ){
+        flagArr.push("SECTION_MAP_READ");
+    }
+    if(flag & SECTION_MAP_EXECUTE){
+        flagArr.push("SECTION_MAP_EXECUTE");
+    }
+    if(flag & SECTION_EXTEND_SIZE){
+        flagArr.push("SECTION_EXTEND_SIZE");
+    }
+
+    if (flagArr.length == 6){
+        return "SECTION_ALL_ACCESS";
+    }
+    else if(flagArr.length > 0){
+        return flagArr.join(" | ");
+    }
+    else{
+        return hexify(flag);
+    }
+}
+
 
 
 /////////////////////////////////////////////////////////
@@ -303,6 +385,151 @@ Interceptor.replace(ptrExitProcess, new NativeCallback(function (uExitCode) {
 }, 'void', ['uint'], 'stdcall'));
 
 
+
+// NTSTATUS NtMapViewOfSection(
+//   _In_        HANDLE          SectionHandle,
+//   _In_        HANDLE          ProcessHandle,
+//   _Inout_     PVOID           *BaseAddress,
+//   _In_        ULONG_PTR       ZeroBits,
+//   _In_        SIZE_T          CommitSize,
+//   _Inout_opt_ PLARGE_INTEGER  SectionOffset,
+//   _Inout_     PSIZE_T         ViewSize,
+//   _In_        SECTION_INHERIT InheritDisposition,
+//   _In_        ULONG           AllocationType,
+//   _In_        ULONG           Win32Protect
+// );
+var ptrNtMapViewOfSection= Module.findExportByName("NTDLL.DLL", "NtMapViewOfSection");
+var NtMapViewOfSection = new NativeFunction(ptrNtMapViewOfSection, 'uint', ['uint', 'uint', 'pointer', 'pointer', 'uint', 'pointer', 'pointer', 'uint', 'ulong', 'ulong' ], 'stdcall');
+Interceptor.replace(ptrNtMapViewOfSection, new NativeCallback(function (SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType,  Win32Protect) {
+    var RetNTAPI = NtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType,  Win32Protect);
+    
+    var strRetNTAPI = hexify(RetNTAPI);
+    var strSectionHandle = hexify(SectionHandle);
+    var strProcessHandle = hexify(ProcessHandle);
+    var strBaseAddress = hexify(Memory.readU32(BaseAddress));
+    var strZeroBits = hexify(ZeroBits.toInt32());
+    var strCommitSize = hexify(CommitSize);
+
+    var strSectionOffset = "NULL";
+    try{
+        strSectionOffset = hexify(Memory.readLong(SectionOffset));
+    }
+    catch (e){
+        //log("NtMapViewOfSection: error reading ptr SectionOffset");
+    }
+
+    var strViewSize = hexify(Memory.readU32(ViewSize));
+    var strInheritDisposition = hexify(InheritDisposition);
+    var strAllocationType = hexify(AllocationType);
+    var strWin32Protect = getProtectionStr(Win32Protect);
+    log("NtMapViewOfSection("+strSectionHandle+", "+strProcessHandle+", "+strBaseAddress+", "+strZeroBits+", "+strCommitSize+", "+strSectionOffset+", "+strViewSize+", "+strInheritDisposition+", "+strAllocationType+", "+strWin32Protect+") -> " + strRetNTAPI);
+    log("NtMapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
+
+    //TODO: this will fail if SectionOffset is used instead of ViewSize ... this shouldn't happen for injection
+    //test to see if mapped to local process
+    if(ProcessHandle == 0xffffffff){
+        //does entry already exist for section
+        if(sections.hasOwnProperty(SectionHandle)){
+            sections[SectionHandle]["BaseAddress"] = Memory.readU32(BaseAddress);
+            sections[SectionHandle]["ViewSize"] = Memory.readU32(ViewSize);
+        }
+        else{
+            var section_entry = {"BaseAddress": Memory.readU32(BaseAddress), "ViewSize": Memory.readU32(ViewSize), "RemotePID": null, "RemoteBaseAddress": null};
+            sections[SectionHandle] = section_entry;
+        }
+    } 
+    else{
+        //does entry already exist for section
+        if(sections.hasOwnProperty(SectionHandle)){
+            sections[SectionHandle]["RemotePID"] = GetProcessId(ProcessHandle);
+            sections[SectionHandle]["RemoteBaseAddress"] = Memory.readU32(BaseAddress);
+        }
+        else{
+            var section_entry = {"BaseAddress": null, "ViewSize": null, "RemotePID": GetProcessId(ProcessHandle), "RemoteBaseAddress": Memory.readU32(BaseAddress)};
+            sections[SectionHandle] = section_entry;
+        }
+    }
+
+}, 'uint', ['uint', 'uint', 'pointer', 'pointer', 'uint', 'pointer', 'pointer', 'uint', 'ulong', 'ulong' ], 'stdcall'));
+
+
+// NTSTATUS NtUnmapViewOfSection(
+//   _In_     HANDLE ProcessHandle,
+//   _In_opt_ PVOID  BaseAddress
+// );
+var ptrNtUnmapViewOfSection= Module.findExportByName("NTDLL.DLL", "NtUnmapViewOfSection");
+var NtUnmapViewOfSection = new NativeFunction(ptrNtUnmapViewOfSection, 'uint', ['uint', 'pointer'], 'stdcall');
+Interceptor.replace(ptrNtUnmapViewOfSection, new NativeCallback(function (ProcessHandle, BaseAddress) {
+    //if section that has been remote mapped is being unmapped locally dump it!
+    if(ProcessHandle == 0xffffffff){
+        for(var i in sections){
+            //find section at base
+            if(sections[i]["BaseAddress"] == BaseAddress.toInt32()){
+                //check if section was remotely mapped
+                if(sections[i]["RemotePID"] != null){
+                    var raw_data = Memory.readByteArray(ptr(sections[i]["BaseAddress"]),sections[i]["ViewSize"]);
+                    dump(sections[i]["RemoteBaseAddress"],raw_data);
+                    sections.splice(i,1);
+                    break;
+                }
+            } 
+        }
+    }
+
+    var RetNTAPI = NtUnmapViewOfSection(ProcessHandle, BaseAddress);
+    
+    var strRetNTAPI = hexify(RetNTAPI);
+    var strProcessHandle = hexify(ProcessHandle);
+    var strBaseAddress = hexify(BaseAddress.toInt32());
+
+    log("NtUnmapViewOfSection("+strProcessHandle+", "+strBaseAddress+") -> " + strRetNTAPI);
+    log("NtUnmapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
+}, 'uint', ['uint', 'pointer'], 'stdcall'));
+
+
+// NTSTATUS NtCreateSection(
+//   _Out_    PHANDLE            SectionHandle,
+//   _In_     ACCESS_MASK        DesiredAccess,
+//   _In_opt_ POBJECT_ATTRIBUTES ObjectAttributes,
+//   _In_opt_ PLARGE_INTEGER     MaximumSize,
+//   _In_     ULONG              SectionPageProtection,
+//   _In_     ULONG              AllocationAttributes,
+//   _In_opt_ HANDLE             FileHandle
+// );
+var ptrNtCreateSection= Module.findExportByName("NTDLL.DLL", "NtCreateSection");
+var NtCreateSection = new NativeFunction(ptrNtCreateSection, 'uint', ['pointer', 'uint', 'pointer', 'pointer', 'ulong', 'ulong', 'uint'], 'stdcall');
+Interceptor.replace(ptrNtCreateSection, new NativeCallback(function (SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle) {
+    var RetNTAPI = NtCreateSection(SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
+    
+    var strRetNTAPI = hexify(RetNTAPI);
+    var strSectionHandle = hexify(Memory.readU32(SectionHandle));
+    var strDesiredAccess= getAccessStr(DesiredAccess);
+
+    var strObjectAttributes = "NULL";
+    try{
+        strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
+    }
+    catch (e){
+        //log("NtCreateSection: error reading ptr ObjectAttributes");
+    }
+
+    var strMaximumSize = "NULL";
+    try{
+        strMaximumSize = hexify(Memory.readLong(MaximumSize));
+    }
+    catch (e){
+        //log("NtCreateSection: error reading ptr MaximumSize");
+    }
+
+    var strSectionPageProtection = getProtectionStr(SectionPageProtection);
+    var strAllocationAttributes = getAllocationAttributesStr(AllocationAttributes);
+    var strFileHandle = hexify(FileHandle);
+
+    log("NtCreateSection("+strSectionHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strMaximumSize+", "+strSectionPageProtection+", "+strAllocationAttributes+", "+strFileHandle+") -> " + strRetNTAPI);
+
+}, 'uint',  ['pointer', 'uint', 'pointer', 'pointer', 'ulong', 'ulong', 'uint'], 'stdcall'));
+
+
 // NtWriteVirtualMemory(
 // IN HANDLE               ProcessHandle,
 // IN PVOID                BaseAddress,
@@ -328,7 +555,7 @@ Interceptor.replace(ptrNtWriteVirtualMemory, new NativeCallback(function (Proces
         strNumberOfBytesWritten = hexify(Memory.readULong(NumberOfBytesWritten));
     }
     catch (e){
-        log("NtWriteVirtualMemory: error reading ptr NumberOfBytesWritten");
+        //log("NtWriteVirtualMemory: error reading ptr NumberOfBytesWritten");
     }
 
     log("NtWriteVirtualMemory("+strProcessHandle+", "+strBaseAddress+", "+strBuffer+", "+strNumberOfBytesToWrite+", "+strNumberOfBytesWritten+") -> " + strRetNTAPI);
@@ -375,7 +602,7 @@ Interceptor.replace(ptrNtCreateThread, new NativeCallback(function (ThreadHandle
         strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
     }
     catch (e){
-        log("NtCreateThread: error reading ptr ObjectAttributes");
+        //log("NtCreateThread: error reading ptr ObjectAttributes");
     }
 
 
@@ -399,6 +626,29 @@ Interceptor.replace(ptrNtCreateThread, new NativeCallback(function (ThreadHandle
 var ptrNtResumeThread = Module.findExportByName("NTDLL.DLL", "NtResumeThread");
 var NtResumeThread = new NativeFunction(ptrNtResumeThread, 'uint', ['uint', 'pointer'], 'stdcall');
 Interceptor.replace(ptrNtResumeThread, new NativeCallback(function (ThreadHandle, SuspendCount) {
+    //kill everything if remote thread resumed
+    var thread_pid = GetProcessIdOfThread(ThreadHandle);
+    log("NtResumeThread pid: " + String(thread_pid));
+
+    var arr_len = pids.length;
+    for (var i = 0; i < arr_len; i++) {
+        if(thread_pid == pids[i]){
+            //check to see if any remote mapped sections in process and dump them!
+            //they should already be caught by unmap locally but maybe they weren't unmapped
+            for(var i in sections){
+                //find sections remote mapped
+                if(sections[i]["RemotePID"] == thread_pid){
+                    var raw_data = Memory.readByteArray(ptr(sections[i]["BaseAddress"]),sections[i]["ViewSize"]);
+                    dump(sections[i]["RemoteBaseAddress"],raw_data);
+                } 
+            }
+            //kill remote process and kill this process we are done!
+            pKill(thread_pid);
+            eKill("Completed dumping");
+        }
+    }
+    //We should never get here if remote thread
+    //if not remote thread then proceed
     var RetNTAPI = NtResumeThread(ThreadHandle, SuspendCount);
 
     var strRetNTAPI = hexify(RetNTAPI);
@@ -410,22 +660,10 @@ Interceptor.replace(ptrNtResumeThread, new NativeCallback(function (ThreadHandle
         strSuspendCount = hexify(Memory.readULong(SuspendCount));
     }
     catch (e){
-        log("NtResumeThread: error reading ptr SuspendCount");
+        //log("NtResumeThread: error reading ptr SuspendCount");
     }
 
     log("NtResumeThread("+strThreadHandle+", "+strSuspendCount+") -> " + strRetNTAPI);
-
-    //kill everything if remote thread resumed
-    var thread_pid = GetProcessIdOfThread(ThreadHandle);
-    log("NtResumeThread pid: " + String(thread_pid));
-
-    var arr_len = pids.length;
-    for (var i = 0; i < arr_len; i++) {
-        if(thread_pid == pids[i]){
-            pKill(thread_pid);
-            eKill("Completed dumping");
-        }
-    }
     return RetNTAPI;
 
 }, 'uint', ['uint', 'pointer'], 'stdcall'));
@@ -439,18 +677,18 @@ var NtDelayExecution = new NativeFunction(ptrNtDelayExecution, 'uint', ['uchar',
 Interceptor.replace(ptrNtDelayExecution, new NativeCallback(function (Alertable, DelayInterval) {
 
     
-    var strAlertable = Boolean(Alertable).toString();
-    var strDelayInterval = hexify(Memory.readLong(DelayInterval));
+    //var strAlertable = Boolean(Alertable).toString();
+    //var strDelayInterval = hexify(Memory.readLong(DelayInterval));
 
     //set delay to 1 nanosec
     //TODO: hook time ticks and add in lost time
-    log("Squashed delay: " + strDelayInterval);
-    Memory.writeLong(DelayInterval, 1);
-
+    //log("Squashed delay: " + strDelayInterval);
+    //Memory.writeLong(DelayInterval, 1);
+    log("Delay: " + String(Memory.readLong(DelayInterval)));
     var RetNTAPI = NtDelayExecution(Alertable, DelayInterval);
     var strRetNTAPI = hexify(RetNTAPI);
 
-    log("NtDelayExecution("+strAlertable+", "+strDelayInterval+") -> " + strRetNTAPI);
+    //log("NtDelayExecution("+strAlertable+", "+strDelayInterval+") -> " + strRetNTAPI);
     return RetNTAPI;
 
 }, 'uint', ['uchar', 'pointer'], 'stdcall'));
@@ -485,7 +723,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strApplicationName = Memory.readUtf16String(ApplicationName);
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr ApplicationName");
+        //log("CreateProcessInternalW: error reading ptr ApplicationName");
     }
 
     
@@ -494,7 +732,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strCommandLine =  Memory.readUtf16String(CommandLine);
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr CommandLine");
+        //log("CreateProcessInternalW: error reading ptr CommandLine");
     }
         
 
@@ -503,7 +741,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strProcessAttributes =  hexify(Memory.readU32(ProcessAttributes));
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr ProcessAttributes");
+        //log("CreateProcessInternalW: error reading ptr ProcessAttributes");
     }
    
 
@@ -512,7 +750,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strThreadAttributes =  hexify(Memory.readU32(ThreadAttributes));
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr ThreadAttributes");
+        //log("CreateProcessInternalW: error reading ptr ThreadAttributes");
     }
 
 
@@ -525,7 +763,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strEnvironment =  hexify(Memory.readU32(Environment));
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr Environment");
+        //log("CreateProcessInternalW: error reading ptr Environment");
     }
 
 
@@ -534,7 +772,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strCurrentDirectory =  hexify(Memory.readU32(CurrentDirectory));
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr CurrentDirectory");
+        //log("CreateProcessInternalW: error reading ptr CurrentDirectory");
     }
 
 
@@ -558,7 +796,7 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
         strNewToken =  hexify(Memory.readU32(NewToken));
     }
     catch (e){
-        log("CreateProcessInternalW: error reading ptr NewToken");
+        //log("CreateProcessInternalW: error reading ptr NewToken");
     }
 
 
