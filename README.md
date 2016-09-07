@@ -18,7 +18,7 @@ The code is specifically commented and organized to act as a template for you to
 * Install [Python 2.7](https://www.python.org/downloads/)
 * Remember to [set your python and pip paths](http://docs.python-guide.org/en/latest/starting/install/win/) ; )
 * Install Frida by typing `pip install frida` in cmd
-* Clone this repository and you are read to extract!
+* Clone this repository and you are ready to extract!
 
 ## Extracting PE Files
 
