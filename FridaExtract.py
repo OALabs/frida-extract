@@ -63,6 +63,13 @@ class FridaExtract:
         pe_file = reconstructor.auto_build()
         file(self.out_file, 'wb').write(pe_file)
 
+    def dump_raw_sections(self):
+        reconstructor = rebuild.ParsePE(self.dump)
+        bin_arr = reconstructor.dump_raw_sections()
+        count = 0
+        for bin_str in bin_arr:
+            file("dump"+str(count)+".bin", 'wb').write(bin_str)
+            count += 1 
 
     def dump_raw(self):
         """
@@ -94,6 +101,7 @@ class FridaExtract:
             raise FridaExtractError("API not found")
             return -1
 
+    
     def _process_message(self, message, data):
         """
             Frida COMMS
@@ -103,7 +111,7 @@ class FridaExtract:
             if stanza['name'] == '+log':
                 print stanza['payload'] + "\n"
                 try:
-                    self.extract.post_message({ 'type': '+log-ack' })
+                    self.extract.post({ 'type': '+log-ack' })
                 except Exception as e:
                     pass
 
@@ -114,14 +122,14 @@ class FridaExtract:
                 #serialize data and store 
                 self.dump[stanza["address"]] = [ord(elem) for elem in data]
                 try:
-                    self.extract.post_message({ 'type': '+dump-ack' })
+                    self.extract.post({ 'type': '+dump-ack' })
                 except Exception as e:
                     pass
 
             elif stanza['name'] == '+flush':
                 print "Flush Message Buffers"
                 try:
-                    self.extract.post_message({ 'type': '+flush-ack' })
+                    self.extract.post({ 'type': '+flush-ack' })
                 except Exception as e:
                     pass
 
@@ -130,7 +138,7 @@ class FridaExtract:
                 frida.kill(self.pid)
                 print "Dump Complete!\n\nPress Enter to quit."
                 try:
-                    self.extract.post_message({ 'type': '+kill-ack' })
+                    self.extract.post({ 'type': '+kill-ack' })
                 except Exception as e:
                     pass
 
@@ -138,11 +146,13 @@ class FridaExtract:
                 print "Kill Sub-Process: " + str(stanza['payload']) + "\n"
                 frida.kill(int(stanza['payload']))
                 if self.raw:
-                    self.dump_raw()
+                    #self.dump_raw()
+                    self.dump_raw_sections()
+
                 else:
                     self.rebuild_pe()
                 try:
-                    self.extract.post_message({ 'type': '+pkill-ack' })
+                    self.extract.post({ 'type': '+pkill-ack' })
                 except Exception as e:
                     pass
         else:

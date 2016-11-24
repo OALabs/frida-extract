@@ -58,6 +58,13 @@ const SECTION_MAP_READ = 0x0004;
 const SECTION_MAP_EXECUTE = 0x0008;
 const SECTION_EXTEND_SIZE = 0x0010;
 
+const MEMORY_INFORMATION_CLASS_MemoryBasicInformation = 0x00; // MEMORY_BASIC_INFORMATION
+const MEMORY_INFORMATION_CLASS_MemoryWorkingSetInformation = 0x01; // MEMORY_WORKING_SET_INFORMATION
+const MEMORY_INFORMATION_CLASS_MemoryMappedFilenameInformation = 0x02; // UNICODE_STRING
+const MEMORY_INFORMATION_CLASS_MemoryRegionInformation = 0x03; // MEMORY_REGION_INFORMATION
+const MEMORY_INFORMATION_CLASS_MemoryWorkingSetExInformation = 0x04; // MEMORY_WORKING_SET_EX_INFORMATION
+const MEMORY_INFORMATION_CLASS_MemorySharedCommitInformation = 0x05; // MEMORY_SHARED_COMMIT_INFORMATION
+
 
 /////////////////////////////////////////////////////////
 //
@@ -350,6 +357,17 @@ function getAccessStr(flag){
 //
 /////////////////////////////////////////////////////////
 
+// NTSTATUS NtQueryVirtualMemory(
+//   _In_      HANDLE                   ProcessHandle,
+//   _In_opt_  PVOID                    BaseAddress,
+//   _In_      MEMORY_INFORMATION_CLASS MemoryInformationClass,
+//   _Out_     PVOID                    MemoryInformation,
+//   _In_      SIZE_T                   MemoryInformationLength,
+//   _Out_opt_ PSIZE_T                  ReturnLength
+// );
+var NtQueryVirtualMemory = new NativeFunction(Module.findExportByName("NTDLL.DLL", "NtQueryVirtualMemory"), 'uint', ['uint','pointer','uint','pointer','uint','pointer'], 'stdcall');
+
+
 // DWORD WINAPI GetProcessId(
 //   _In_ HANDLE Process
 // );
@@ -365,6 +383,56 @@ var GetCurrentProcessId = new NativeFunction(Module.findExportByName("KERNEL32.D
 
 //store current process ID
 current_pid = GetCurrentProcessId();
+
+
+
+/////////////////////////////////////////////////////////
+//
+// SETUP WRAPPER FUNCTIONS
+//
+/////////////////////////////////////////////////////////
+
+function getMemoryInfo(processHandle, address){
+    var out={};    
+
+    var len_memory_basic_information = 28;
+    var memory_basic_information = Memory.alloc(len_memory_basic_information);
+    var out_buff_size = Memory.alloc(4);
+
+    // NTSTATUS NtQueryVirtualMemory(
+    //   _In_      HANDLE                   ProcessHandle,
+    //   _In_opt_  PVOID                    BaseAddress,
+    //   _In_      MEMORY_INFORMATION_CLASS MemoryInformationClass,
+    //   _Out_     PVOID                    MemoryInformation,
+    //   _In_      SIZE_T                   MemoryInformationLength,
+    //   _Out_opt_ PSIZE_T                  ReturnLength
+    // );
+    var ntstatus = NtQueryVirtualMemory(processHandle,ptr(address),MEMORY_INFORMATION_CLASS_MemoryBasicInformation,memory_basic_information,len_memory_basic_information,out_buff_size);
+
+    if(ntstatus == 0){
+        //Extract information from struct:
+        // typedef struct _MEMORY_BASIC_INFORMATION {
+        //   PVOID  BaseAddress;
+        //   PVOID  AllocationBase;
+        //   DWORD  AllocationProtect;
+        //   SIZE_T RegionSize;
+        //   DWORD  State;
+        //   DWORD  Protect;
+        //   DWORD  Type;
+        // } MEMORY_BASIC_INFORMATION, *PMEMORY_BASIC_INFORMATION;
+
+        out["base_address"] = Memory.readU32(ptr(memory_basic_information.toInt32()));
+        out["allocation_base"] = Memory.readU32(ptr(memory_basic_information.toInt32()+4));
+        out["allocation_protect"] = Memory.readU32(ptr(memory_basic_information.toInt32()+8));
+        out["region_size"] = Memory.readU32(ptr(memory_basic_information.toInt32()+12));
+        out["state"] = Memory.readU32(ptr(memory_basic_information.toInt32()+16));
+        out["protect"] = Memory.readU32(ptr(memory_basic_information.toInt32()+20));
+        out["type"] = Memory.readU32(ptr(memory_basic_information.toInt32()+24));
+    }
+
+    return out;
+}
+
 
 
 /////////////////////////////////////////////////////////
@@ -385,6 +453,22 @@ Interceptor.replace(ptrExitProcess, new NativeCallback(function (uExitCode) {
 }, 'void', ['uint'], 'stdcall'));
 
 
+// NTSTATUS NtCreateFile(
+//   _Out_    PHANDLE            FileHandle,
+//   _In_     ACCESS_MASK        DesiredAccess,
+//   _In_     POBJECT_ATTRIBUTES ObjectAttributes,
+//   _Out_    PIO_STATUS_BLOCK   IoStatusBlock,
+//   _In_opt_ PLARGE_INTEGER     AllocationSize,
+//   _In_     ULONG              FileAttributes,
+//   _In_     ULONG              ShareAccess,
+//   _In_     ULONG              CreateDisposition,
+//   _In_     ULONG              CreateOptions,
+//   _In_     PVOID              EaBuffer,
+//   _In_     ULONG              EaLength
+// );
+
+// TODO: hook NtCreateFile
+
 
 // NTSTATUS NtMapViewOfSection(
 //   _In_        HANDLE          SectionHandle,
@@ -402,53 +486,58 @@ var ptrNtMapViewOfSection= Module.findExportByName("NTDLL.DLL", "NtMapViewOfSect
 var NtMapViewOfSection = new NativeFunction(ptrNtMapViewOfSection, 'uint', ['uint', 'uint', 'pointer', 'pointer', 'uint', 'pointer', 'pointer', 'uint', 'ulong', 'ulong' ], 'stdcall');
 Interceptor.replace(ptrNtMapViewOfSection, new NativeCallback(function (SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType,  Win32Protect) {
     var RetNTAPI = NtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType,  Win32Protect);
-    
-    var strRetNTAPI = hexify(RetNTAPI);
-    var strSectionHandle = hexify(SectionHandle);
-    var strProcessHandle = hexify(ProcessHandle);
-    var strBaseAddress = hexify(Memory.readU32(BaseAddress));
-    var strZeroBits = hexify(ZeroBits.toInt32());
-    var strCommitSize = hexify(CommitSize);
+    if(RetNTAPI ==0){
+        var strRetNTAPI = hexify(RetNTAPI);
+        var strSectionHandle = hexify(SectionHandle);
+        var strProcessHandle = hexify(ProcessHandle);
+        var strBaseAddress = hexify(Memory.readU32(BaseAddress));
+        var strZeroBits = hexify(ZeroBits.toInt32());
+        var strCommitSize = hexify(CommitSize);
 
-    var strSectionOffset = "NULL";
-    try{
-        strSectionOffset = hexify(Memory.readLong(SectionOffset));
-    }
-    catch (e){
-        //log("NtMapViewOfSection: error reading ptr SectionOffset");
-    }
-
-    var strViewSize = hexify(Memory.readU32(ViewSize));
-    var strInheritDisposition = hexify(InheritDisposition);
-    var strAllocationType = hexify(AllocationType);
-    var strWin32Protect = getProtectionStr(Win32Protect);
-    log("NtMapViewOfSection("+strSectionHandle+", "+strProcessHandle+", "+strBaseAddress+", "+strZeroBits+", "+strCommitSize+", "+strSectionOffset+", "+strViewSize+", "+strInheritDisposition+", "+strAllocationType+", "+strWin32Protect+") -> " + strRetNTAPI);
-    log("NtMapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
-
-    //TODO: this will fail if SectionOffset is used instead of ViewSize ... this shouldn't happen for injection
-    //test to see if mapped to local process
-    if(ProcessHandle == 0xffffffff){
-        //does entry already exist for section
-        if(sections.hasOwnProperty(SectionHandle)){
-            sections[SectionHandle]["BaseAddress"] = Memory.readU32(BaseAddress);
-            sections[SectionHandle]["ViewSize"] = Memory.readU32(ViewSize);
+        var strSectionOffset = "NULL";
+        try{
+            strSectionOffset = hexify(Memory.readLong(SectionOffset));
         }
+        catch (e){
+            //log("NtMapViewOfSection: error reading ptr SectionOffset");
+        }
+
+        var strViewSize = hexify(Memory.readU32(ViewSize));
+        var strInheritDisposition = hexify(InheritDisposition);
+        var strAllocationType = hexify(AllocationType);
+        var strWin32Protect = getProtectionStr(Win32Protect);
+        log("NtMapViewOfSection("+strSectionHandle+", "+strProcessHandle+", "+strBaseAddress+", "+strZeroBits+", "+strCommitSize+", "+strSectionOffset+", "+strViewSize+", "+strInheritDisposition+", "+strAllocationType+", "+strWin32Protect+") -> " + strRetNTAPI);
+        log("NtMapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
+
+        //TODO: this will fail if SectionOffset is used instead of ViewSize ... this shouldn't happen for injection
+        //test to see if mapped to local process
+        if(ProcessHandle == 0xffffffff){
+            //does entry already exist for section
+            if(sections.hasOwnProperty(SectionHandle)){
+                sections[SectionHandle]["BaseAddress"] = Memory.readU32(BaseAddress);
+                sections[SectionHandle]["ViewSize"] = Memory.readU32(ViewSize);
+            }
+            else{
+                var section_entry = {"BaseAddress": Memory.readU32(BaseAddress), "ViewSize": Memory.readU32(ViewSize), "RemotePID": null, "RemoteBaseAddress": null};
+                sections[SectionHandle] = section_entry;
+            }
+        } 
         else{
-            var section_entry = {"BaseAddress": Memory.readU32(BaseAddress), "ViewSize": Memory.readU32(ViewSize), "RemotePID": null, "RemoteBaseAddress": null};
-            sections[SectionHandle] = section_entry;
+            //does entry already exist for section
+            if(sections.hasOwnProperty(SectionHandle)){
+                sections[SectionHandle]["RemotePID"] = GetProcessId(ProcessHandle);
+                sections[SectionHandle]["RemoteBaseAddress"] = Memory.readU32(BaseAddress);
+            }
+            else{
+                var section_entry = {"BaseAddress": null, "ViewSize": null, "RemotePID": GetProcessId(ProcessHandle), "RemoteBaseAddress": Memory.readU32(BaseAddress)};
+                sections[SectionHandle] = section_entry;
+            }
         }
-    } 
+    }
     else{
-        //does entry already exist for section
-        if(sections.hasOwnProperty(SectionHandle)){
-            sections[SectionHandle]["RemotePID"] = GetProcessId(ProcessHandle);
-            sections[SectionHandle]["RemoteBaseAddress"] = Memory.readU32(BaseAddress);
-        }
-        else{
-            var section_entry = {"BaseAddress": null, "ViewSize": null, "RemotePID": GetProcessId(ProcessHandle), "RemoteBaseAddress": Memory.readU32(BaseAddress)};
-            sections[SectionHandle] = section_entry;
-        }
+        log("NtMapViewOfSection error: " + hexify(RetNTAPI));
     }
+    return RetNTAPI;
 
 }, 'uint', ['uint', 'uint', 'pointer', 'pointer', 'uint', 'pointer', 'pointer', 'uint', 'ulong', 'ulong' ], 'stdcall'));
 
@@ -477,13 +566,19 @@ Interceptor.replace(ptrNtUnmapViewOfSection, new NativeCallback(function (Proces
     }
 
     var RetNTAPI = NtUnmapViewOfSection(ProcessHandle, BaseAddress);
-    
-    var strRetNTAPI = hexify(RetNTAPI);
-    var strProcessHandle = hexify(ProcessHandle);
-    var strBaseAddress = hexify(BaseAddress.toInt32());
+    if(RetNTAPI ==0 ){
+        var strRetNTAPI = hexify(RetNTAPI);
+        var strProcessHandle = hexify(ProcessHandle);
+        var strBaseAddress = hexify(BaseAddress.toInt32());
 
-    log("NtUnmapViewOfSection("+strProcessHandle+", "+strBaseAddress+") -> " + strRetNTAPI);
-    log("NtUnmapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
+        log("NtUnmapViewOfSection("+strProcessHandle+", "+strBaseAddress+") -> " + strRetNTAPI);
+        log("NtUnmapViewOfSection pid: " + String(GetProcessId(ProcessHandle)));
+    }
+    else{
+        log("NtMapViewOfSection error: " + hexify(RetNTAPI));
+    }
+    return RetNTAPI;
+
 }, 'uint', ['uint', 'pointer'], 'stdcall'));
 
 
@@ -501,31 +596,37 @@ var NtCreateSection = new NativeFunction(ptrNtCreateSection, 'uint', ['pointer',
 Interceptor.replace(ptrNtCreateSection, new NativeCallback(function (SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle) {
     var RetNTAPI = NtCreateSection(SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle);
     
-    var strRetNTAPI = hexify(RetNTAPI);
-    var strSectionHandle = hexify(Memory.readU32(SectionHandle));
-    var strDesiredAccess= getAccessStr(DesiredAccess);
+    if(RetNTAPI ==0){
+        var strRetNTAPI = hexify(RetNTAPI);
+        var strSectionHandle = hexify(Memory.readU32(SectionHandle));
+        var strDesiredAccess= getAccessStr(DesiredAccess);
 
-    var strObjectAttributes = "NULL";
-    try{
-        strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
-    }
-    catch (e){
-        //log("NtCreateSection: error reading ptr ObjectAttributes");
-    }
+        var strObjectAttributes = "NULL";
+        try{
+            strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
+        }
+        catch (e){
+            //log("NtCreateSection: error reading ptr ObjectAttributes");
+        }
 
-    var strMaximumSize = "NULL";
-    try{
-        strMaximumSize = hexify(Memory.readLong(MaximumSize));
-    }
-    catch (e){
-        //log("NtCreateSection: error reading ptr MaximumSize");
-    }
+        var strMaximumSize = "NULL";
+        try{
+            strMaximumSize = hexify(Memory.readLong(MaximumSize));
+        }
+        catch (e){
+            //log("NtCreateSection: error reading ptr MaximumSize");
+        }
 
-    var strSectionPageProtection = getProtectionStr(SectionPageProtection);
-    var strAllocationAttributes = getAllocationAttributesStr(AllocationAttributes);
-    var strFileHandle = hexify(FileHandle);
+        var strSectionPageProtection = getProtectionStr(SectionPageProtection);
+        var strAllocationAttributes = getAllocationAttributesStr(AllocationAttributes);
+        var strFileHandle = hexify(FileHandle);
 
-    log("NtCreateSection("+strSectionHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strMaximumSize+", "+strSectionPageProtection+", "+strAllocationAttributes+", "+strFileHandle+") -> " + strRetNTAPI);
+        log("NtCreateSection("+strSectionHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strMaximumSize+", "+strSectionPageProtection+", "+strAllocationAttributes+", "+strFileHandle+") -> " + strRetNTAPI);
+    }
+    else{
+        log("NtCreateSection error: " + hexify(RetNTAPI));
+    }
+    return RetNTAPI;
 
 }, 'uint',  ['pointer', 'uint', 'pointer', 'pointer', 'ulong', 'ulong', 'uint'], 'stdcall'));
 
@@ -539,41 +640,52 @@ Interceptor.replace(ptrNtCreateSection, new NativeCallback(function (SectionHand
 var ptrNtWriteVirtualMemory = Module.findExportByName("NTDLL.DLL", "NtWriteVirtualMemory");
 var NtWriteVirtualMemory = new NativeFunction(ptrNtWriteVirtualMemory, 'uint', ['uint', 'pointer', 'pointer','ulong','pointer'], 'stdcall');
 Interceptor.replace(ptrNtWriteVirtualMemory, new NativeCallback(function (ProcessHandle, BaseAddress, Buff, NumberOfBytesToWrite, NumberOfBytesWritten) {
-    var RetNTAPI = NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buff, NumberOfBytesToWrite, NumberOfBytesWritten);
-
-    var strRetNTAPI = hexify(RetNTAPI);
-
-    var strProcessHandle = hexify(ProcessHandle);
-    var strBaseAddress = hexify(BaseAddress.toInt32());
-
-    var strBuffer= hexify(Buff.toInt32());
-
-    var strNumberOfBytesToWrite = hexify(NumberOfBytesToWrite);
-
-    var strNumberOfBytesWritten = "NULL";
     try{
-        strNumberOfBytesWritten = hexify(Memory.readULong(NumberOfBytesWritten));
+    var RetNTAPI = NtWriteVirtualMemory(ProcessHandle, BaseAddress, Buff, NumberOfBytesToWrite, NumberOfBytesWritten);
     }
-    catch (e){
-        //log("NtWriteVirtualMemory: error reading ptr NumberOfBytesWritten");
+    catch(e){
+        log(String(e));
+        log("NtWriteVirtualMemory Error!");
+        eKill("NtWriteVirtualMemory Error!");
     }
 
-    log("NtWriteVirtualMemory("+strProcessHandle+", "+strBaseAddress+", "+strBuffer+", "+strNumberOfBytesToWrite+", "+strNumberOfBytesWritten+") -> " + strRetNTAPI);
-    log("NtWriteVirtualMemory pid: " + String(GetProcessId(ProcessHandle)));
+    if(RetNTAPI ==0 ){ 
+        var strRetNTAPI = hexify(RetNTAPI);
 
-    //dump if written to remote proc
-    //TODO: handle writes to multiple processes (anti-unpacker)
-    var mem_pid = GetProcessId(ProcessHandle);
-    var arr_len = pids.length;
-    for (var i = 0; i < arr_len; i++) {
-        if(mem_pid == pids[i]){
-            var memstart = Buff.toInt32();
-            var size = NumberOfBytesToWrite;
-            var rawArr = Memory.readByteArray(ptr(memstart),size);
-            dump(BaseAddress.toInt32(),rawArr);
+        var strProcessHandle = hexify(ProcessHandle);
+        var strBaseAddress = hexify(BaseAddress.toInt32());
+
+        var strBuffer= hexify(Buff.toInt32());
+
+        var strNumberOfBytesToWrite = hexify(NumberOfBytesToWrite);
+
+        var strNumberOfBytesWritten = "NULL";
+        try{
+            strNumberOfBytesWritten = hexify(Memory.readULong(NumberOfBytesWritten));
+        }
+        catch (e){
+            //log("NtWriteVirtualMemory: error reading ptr NumberOfBytesWritten");
+        }
+
+        log("NtWriteVirtualMemory("+strProcessHandle+", "+strBaseAddress+", "+strBuffer+", "+strNumberOfBytesToWrite+", "+strNumberOfBytesWritten+") -> " + strRetNTAPI);
+        log("NtWriteVirtualMemory pid: " + String(GetProcessId(ProcessHandle)));
+
+        //dump if written to remote proc
+        //TODO: handle writes to multiple processes (anti-unpacker)
+        var mem_pid = GetProcessId(ProcessHandle);
+        var arr_len = pids.length;
+        for (var i = 0; i < arr_len; i++) {
+            if(mem_pid == pids[i]){
+                var memstart = Buff.toInt32();
+                var size = NumberOfBytesToWrite;
+                var rawArr = Memory.readByteArray(ptr(memstart),size);
+                dump(BaseAddress.toInt32(),rawArr);
+            }
         }
     }
-
+    else{
+        log("NtWriteVirtualMemory error: " + hexify(RetNTAPI));
+    }
     return RetNTAPI;
 }, 'uint', ['uint', 'pointer', 'pointer','ulong','pointer'], 'stdcall'));
 
@@ -592,28 +704,31 @@ var NtCreateThread = new NativeFunction(ptrNtCreateThread, 'uint', ['pointer', '
 Interceptor.replace(ptrNtCreateThread, new NativeCallback(function (ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, ClientId, ThreadContext, InitialTeb, CreateSuspended) {
     var RetNTAPI = NtCreateThread(ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle, ClientId, ThreadContext, InitialTeb, CreateSuspended);
 
-    var strRetNTAPI = hexify(RetNTAPI);
-    
-    var strThreadHandle =  hexify(Memory.readU32(ThreadHandle));
-    var strDesiredAccess =  hexify(DesiredAccess);
+    if(RetNTAPI == 0){
+        var strRetNTAPI = hexify(RetNTAPI);
+        
+        var strThreadHandle =  hexify(Memory.readU32(ThreadHandle));
+        var strDesiredAccess =  hexify(DesiredAccess);
 
-    var strObjectAttributes = "NULL";
-    try{
-        strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
+        var strObjectAttributes = "NULL";
+        try{
+            strObjectAttributes = hexify(Memory.readU32(ObjectAttributes));
+        }
+        catch (e){
+            //log("NtCreateThread: error reading ptr ObjectAttributes");
+        }
+
+        var strProcessHandle = hexify(ProcessHandle);
+        var strClientId =  hexify(Memory.readU32(ClientId));
+        var strThreadContext =  hexify(Memory.readU32(ThreadContext));
+        var strInitialTeb =  hexify(Memory.readU32(InitialTeb));
+        var strCreateSuspended = Boolean(CreateSuspended).toString();
+
+        log("NtCreateThread("+strThreadHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strProcessHandle+", "+strClientId+", "+strThreadContext+", "+strInitialTeb+", "+strCreateSuspended+") -> " + strRetNTAPI);
     }
-    catch (e){
-        //log("NtCreateThread: error reading ptr ObjectAttributes");
+    else{
+        log("NtCreateThread error: " + hexify(RetNTAPI));
     }
-
-
-    var strProcessHandle = hexify(ProcessHandle);
-    var strClientId =  hexify(Memory.readU32(ClientId));
-    var strThreadContext =  hexify(Memory.readU32(ThreadContext));
-    var strInitialTeb =  hexify(Memory.readU32(InitialTeb));
-    var strCreateSuspended = Boolean(CreateSuspended).toString();
-
-    log("NtCreateThread("+strThreadHandle+", "+strDesiredAccess+", "+strObjectAttributes+", "+strProcessHandle+", "+strClientId+", "+strThreadContext+", "+strInitialTeb+", "+strCreateSuspended+") -> " + strRetNTAPI);
-
     return RetNTAPI;
 
 }, 'uint', ['pointer', 'uint', 'pointer','uint','pointer','pointer','pointer','uchar'], 'stdcall'));
@@ -647,23 +762,27 @@ Interceptor.replace(ptrNtResumeThread, new NativeCallback(function (ThreadHandle
             eKill("Completed dumping");
         }
     }
-    //We should never get here if remote thread
-    //if not remote thread then proceed
+    //We should never get here if this is a local thread
     var RetNTAPI = NtResumeThread(ThreadHandle, SuspendCount);
 
-    var strRetNTAPI = hexify(RetNTAPI);
+    if(RetNTAPI ==0){
+        var strRetNTAPI = hexify(RetNTAPI);
 
-    var strThreadHandle = hexify(ThreadHandle);
+        var strThreadHandle = hexify(ThreadHandle);
 
-    var strSuspendCount = "NULL";
-    try{
-        strSuspendCount = hexify(Memory.readULong(SuspendCount));
+        var strSuspendCount = "NULL";
+        try{
+            strSuspendCount = hexify(Memory.readULong(SuspendCount));
+        }
+        catch (e){
+            //log("NtResumeThread: error reading ptr SuspendCount");
+        }
+
+        log("NtResumeThread("+strThreadHandle+", "+strSuspendCount+") -> " + strRetNTAPI);
     }
-    catch (e){
-        //log("NtResumeThread: error reading ptr SuspendCount");
+    else{
+        log("NtResumeThread error: " + hexify(RetNTAPI));
     }
-
-    log("NtResumeThread("+strThreadHandle+", "+strSuspendCount+") -> " + strRetNTAPI);
     return RetNTAPI;
 
 }, 'uint', ['uint', 'pointer'], 'stdcall'));
@@ -676,19 +795,17 @@ var ptrNtDelayExecution = Module.findExportByName("NTDLL.DLL", "NtDelayExecution
 var NtDelayExecution = new NativeFunction(ptrNtDelayExecution, 'uint', ['uchar', 'pointer'], 'stdcall');
 Interceptor.replace(ptrNtDelayExecution, new NativeCallback(function (Alertable, DelayInterval) {
 
-    
-    //var strAlertable = Boolean(Alertable).toString();
-    //var strDelayInterval = hexify(Memory.readLong(DelayInterval));
-
-    //set delay to 1 nanosec
-    //TODO: hook time ticks and add in lost time
-    //log("Squashed delay: " + strDelayInterval);
-    //Memory.writeLong(DelayInterval, 1);
-    log("Delay: " + String(Memory.readLong(DelayInterval)));
+    //TODO: hook and kill delay, add time ticks to lost time
+    var strDelayInterval  = "NULL";
+    try{
+        strDelayInterval = Memory.readLong(DelayInterval);
+    }
+    catch (e){
+        //log("NtResumeThread: error reading ptr SuspendCount");
+    }
+    log("NtDelayExecution: " + String(strDelayInterval));
     var RetNTAPI = NtDelayExecution(Alertable, DelayInterval);
     var strRetNTAPI = hexify(RetNTAPI);
-
-    //log("NtDelayExecution("+strAlertable+", "+strDelayInterval+") -> " + strRetNTAPI);
     return RetNTAPI;
 
 }, 'uint', ['uchar', 'pointer'], 'stdcall'));
@@ -711,8 +828,26 @@ Interceptor.replace(ptrNtDelayExecution, new NativeCallback(function (Alertable,
 var ptrCreateProcessInternalW = Module.findExportByName("KERNEL32.DLL", "CreateProcessInternalW");
 var CreateProcessInternalW = new NativeFunction(ptrCreateProcessInternalW, 'uint', ['uint', 'pointer', 'pointer', 'pointer', 'pointer', 'uchar', 'uint', 'pointer', 'pointer', 'pointer', 'pointer', 'pointer' ], 'stdcall');
 Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Token, ApplicationName, CommandLine, ProcessAttributes, ThreadAttributes, InheritHandles, CreationFlags, Environment, CurrentDirectory, StartupInfo, ProcessInformation, NewToken) {
-    var RetNTAPI = CreateProcessInternalW(Token, ApplicationName, CommandLine, ProcessAttributes, ThreadAttributes, InheritHandles, CreationFlags, Environment, CurrentDirectory, StartupInfo, ProcessInformation, NewToken);
-
+    try{
+        var RetNTAPI = CreateProcessInternalW(Token, ApplicationName, CommandLine, ProcessAttributes, ThreadAttributes, InheritHandles, CreationFlags, Environment, CurrentDirectory, StartupInfo, ProcessInformation, NewToken);
+    }
+    catch(e){
+        log(String(e));
+        log("CreateProcessInternalW Error!");
+        log("token " + hexify(Token));
+        log("ApplicationName " + hexify(ApplicationName.toInt32()));
+        log("CommandLine " + hexify(CommandLine.toInt32()));
+        log("ProcessAttributes " + hexify(ProcessAttributes.toInt32()));
+        log("ThreadAttributes " + hexify(ThreadAttributes.toInt32()));
+        log("InheritHandles " + hexify(InheritHandles));
+        log("CreationFlags " + hexify(CreationFlags));
+        log("Environment " + hexify(Environment.toInt32()));
+        log("CurrentDirectory " + hexify(CurrentDirectory.toInt32()));
+        log("StartupInfo " + hexify(StartupInfo.toInt32()));
+        log("ProcessInformation " + hexify(ProcessInformation.toInt32()));
+        log("NewToken " + hexify(NewToken.toInt32()));
+        eKill("CreateProcessInternalW Error!");
+    }
     var strRetNTAPI = hexify(RetNTAPI);
 
     var strToken = hexify(Token);
@@ -817,17 +952,28 @@ Interceptor.replace(ptrCreateProcessInternalW, new NativeCallback(function (Toke
 //
 // EXCEPTION HANDLER
 //
-// *We don't need this for now and it causes a flood of
+// *Warning: causes a flood of
 //  msgs when a packer uses SEH for control flow.
 //
 /////////////////////////////////////////////////////////
 
-// Process.setExceptionHandler(function (ex) {
-//     log("Exception: " +  String(ex));
-// });
+Process.setExceptionHandler(function (ex) {
+    log("Exception: " +  ex);
+    //Mark memory as executable for execute access-violations
+     if(ex["type"].toUpperCase() == "access-violation".toUpperCase()){
+        if(ex['memory']['operation'].toUpperCase() == "execute".toUpperCase()){
+            var xptr = ex["memory"]["address"].toInt32();
+            log("Access-violation: Execute 0x" + xptr.toString(16));            
+            var mem_info = getMemoryInfo(0xffffffff, xptr);
+            if(mem_info.hasOwnProperty("base_address") && mem_info.hasOwnProperty("region_size")){
+                Memory.protect(ptr(mem_info['base_address']), mem_info['region_size'], 'rwx')
+                return true;
+            }
+            return false;
+        }
 
-
-
+    }
+});
 
 
 

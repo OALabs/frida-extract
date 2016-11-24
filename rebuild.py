@@ -126,14 +126,21 @@ class ParsePEError(Exception):
 
 
 class ParsePE: 
-    def __init__(self, sections, base_address=0x400000):
+    def __init__(self, sections, base_address=0x400000, verbose=False):
         """
             Manipulate memory sections to rebuild PE file
             sections: {<virtual_address> : [byte_1,byte_2 ... byte_n], <virtual_address> : [byte_1,byte_2 ... byte_n]}
         """
         self.base_address = base_address
         self.sections = sections
+        self.verbose = verbose
 
+    def _debug(self, msg):
+        """
+            Print debug messages 
+        """
+        if self.verbose:
+            print msg
 
     def arr_to_bin(self, arr):
         """
@@ -142,6 +149,16 @@ class ParsePE:
         out=''
         for i in arr:
             out += chr(i)
+        return out
+
+    def dump_raw_sections(self):
+        """
+        Return array of sections
+        """
+        out = []
+        for address in sorted(self.sections):
+            temp_bin = self.arr_to_bin(self.sections[address])
+            out.append(temp_bin)
         return out
 
     def dump_raw(self):
@@ -207,6 +224,7 @@ class ParsePE:
 
         #attempt to build PE from each candidate
         for temp_base_address in candidates:
+            self._debug("Testing candidate: " + hex(temp_base_address))
             out_file = ''
             try:
                 header_data = self.arr_to_bin(self.sections[temp_base_address])
@@ -216,6 +234,7 @@ class ParsePE:
                 image_nt_headers = IMAGE_NT_HEADERS.from_buffer_copy(header_data, image_dos_header.e_lfanew)
 
                 image_size = image_nt_headers.OptionalHeader.SizeOfImage
+                self._debug("Image Size: " + hex(image_size))
 
                 ##################################################################
                 # Build sections into contiguous binary block with base = 0x0.
@@ -229,11 +248,14 @@ class ParsePE:
                 for ptr_address in sorted(self.sections):
                     #ignore segments below base
                     if ptr_address <= temp_base_address:
+                        self._debug("Segment ignored: " + hex(ptr_address))
                         continue
                     #if segments are within range of PE images size append 
                     if ptr_address <= (temp_base_address + image_size):
+                        self._debug("Append segment: " + hex(ptr_address))
                         #add padding if big_block hasn't reached ptr yet
                         padding = ptr_address - (len(big_block) + temp_base_address)
+                        self._debug("Padding: " + hex(padding))
                         if padding < 0:
                             #something is wrong!
                             continue 
@@ -247,11 +269,14 @@ class ParsePE:
                 #redundent but helps clairify we are now working on one contiguous block of memory
                 image_dos_header = IMAGE_DOS_HEADER.from_buffer_copy(big_block)
                 image_nt_headers = IMAGE_NT_HEADERS.from_buffer_copy(big_block, image_dos_header.e_lfanew)
+                self._debug("Entry point: " + hex(image_nt_headers.OptionalHeader.AddressOfEntryPoint))
+                self._debug("Image base: " + hex(image_nt_headers.OptionalHeader.ImageBase))
 
                 #setup header based on offset of first section
                 first_image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(big_block, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
                 first_section_offset = first_image_section_header.PointerToRawData
                 header_data = big_block[:first_section_offset]
+                self._debug("Firt section offset: " + hex(first_section_offset))
 
                 #add header to out buffer
                 buf = header_data
@@ -260,6 +285,10 @@ class ParsePE:
                 for x in xrange(image_nt_headers.FileHeader.NumberOfSections):
                     # read the image section header
                     image_section_header = IMAGE_SECTION_HEADER.from_buffer_copy(header_data, image_dos_header.e_lfanew + sizeof(c_uint) + sizeof(IMAGE_FILE_HEADER) + x * sizeof(IMAGE_SECTION_HEADER) + image_nt_headers.FileHeader.SizeOfOptionalHeader)
+                    self._debug(image_section_header.Name)
+                    self._debug(hex(image_section_header.PointerToRawData))
+                    self._debug(hex(image_section_header.VirtualAddress))
+                    self._debug(hex(image_section_header.SizeOfRawData))
 
                     # ignore .bss sections
                     if (image_section_header.Name.lower() == '.bss') or (image_section_header.Name.lower() == 'bss'):
