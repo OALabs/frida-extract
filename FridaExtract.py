@@ -47,8 +47,6 @@ class FridaExtract:
     def __init__(self, cmd, out_file="dump.bin"):
         self.pid = frida.spawn(cmd)
         self.session = frida.attach(self.pid)
-        #enable Ducktape runtime
-        self.session.disable_jit()
         self.dump = {}
         self.out_file = out_file
         self.raw = False
